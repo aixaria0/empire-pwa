@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <title>Empire Chat · WebLLM</title>
+  <style>
+    :root { --bg:#0a0a0a; --panel:#141414; --border:#2a2a2a; --fg:#e8e8e8; --muted:#9a9a9a; --user:#1d4ed8; --bot:#1a1a1a; --accent:#3b82f6; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+    body { display:grid; grid-template-rows:auto 1fr auto; height:100dvh; max-width:720px; margin:0 auto; }
+    header { padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    header h1 { font-size:1.05rem; margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    header a, header button.link { color:var(--accent); font-size:0.85rem; background:none; border:none; font:inherit; cursor:pointer; text-decoration:none; }
+    #log { overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+    .bubble { max-width:92%; padding:10px 14px; border-radius:14px; line-height:1.45; font-size:0.95rem; white-space:pre-wrap; word-break:break-word; }
+    .bubble.user { align-self:flex-end; background:var(--user); }
+    .bubble.bot { align-self:flex-start; background:var(--bot); border:1px solid var(--border); }
+    .bubble.sys { align-self:center; color:var(--muted); font-size:0.8rem; text-align:center; }
+    .latency { font-size:0.65rem; color:var(--muted); margin-top:6px; }
+    #progressWrap { display:none; margin:0 16px 8px; padding:10px 12px; background:var(--panel); border:1px solid var(--border); border-radius:10px; font-size:0.8rem; color:var(--muted); }
+    #progressWrap.show { display:block; }
+    #progressBar { height:6px; background:#222; border-radius:99px; margin-top:8px; overflow:hidden; }
+    #progressBar > span { display:block; height:100%; width:0%; background:var(--accent); }
+    footer { padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--border); background:var(--panel); display:grid; grid-template-columns:1fr auto; gap:8px; }
+    textarea { resize:none; min-height:44px; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:#0a0a0a; color:var(--fg); font:inherit; }
+    button.send { font:inherit; padding:0 18px; border-radius:12px; border:none; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+    button.send:disabled { opacity:0.5; }
+    #settings { display:none; position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:50; padding:24px 12px; align-items:flex-end; justify-content:center; }
+    #settings.open { display:flex; }
+    #settings .sheet { width:min(520px,100%); background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:16px; max-height:88dvh; overflow:auto; }
+    #settings h2 { margin:0 0 6px; font-size:1.1rem; }
+    #settings h3 { margin:14px 0 6px; font-size:0.9rem; }
+    #settings label { display:block; font-size:0.8rem; color:var(--muted); margin:10px 0 4px; }
+    #settings input, #settings select { width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:#0a0a0a; color:var(--fg); font:inherit; }
+    #settings .row { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+    #settings button { font:inherit; padding:10px 14px; border-radius:8px; border:1px solid #333; background:#111; color:#fff; cursor:pointer; }
+    #settings button.primary { background:var(--accent); border-color:var(--accent); }
+    .hint { font-size:0.8rem; color:var(--muted); margin:6px 0 0; line-height:1.4; }
+    .mode-pill { font-size:0.7rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+    .mode-pill.webllm { color:#c4b5fd; border-color:#6d28d9; }
+    .mode-pill.live { color:#86efac; border-color:#166534; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Empire Chat <span class="mode-pill" id="modePill">rules</span></h1>
+    <div>
+      <button type="button" class="link" id="settingsBtn">Settings</button>
+      <a href="./index.html">PWA</a>
+    </div>
+  </header>
+  <div id="progressWrap"><div id="progressText">Loading WebLLM…</div><div id="progressBar"><span id="progressFill"></span></div></div>
+  <main id="log" aria-live="polite"></main>
+  <footer>
+    <textarea id="input" rows="1" placeholder="Message…" enterkeyhint="send"></textarea>
+    <button class="send" type="button" id="send">Send</button>
+  </footer>
+  <div id="settings" role="dialog">
+    <div class="sheet">
+      <h2>Engine</h2>
+      <p class="hint"><strong>WebLLM</strong> runs on-device via WebGPU. First load downloads the model; later uses cache.</p>
+      <label for="engineMode">Mode</label>
+      <select id="engineMode">
+        <option value="webllm">WebLLM (in-browser)</option>
+        <option value="api">Remote / Ollama API</option>
+        <option value="rules">Offline rules only</option>
+      </select>
+      <h3>WebLLM</h3>
+      <label for="webllmModel">Model</label>
+      <select id="webllmModel">
+        <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B (recommended)</option>
+        <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B</option>
+        <option value="Phi-3.5-mini-instruct-q4f16_1-MLC">Phi 3.5 mini</option>
+        <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen2.5 1.5B</option>
+      </select>
+      <div class="row"><button type="button" class="primary" id="loadWebllmBtn">Load / switch model</button></div>
+      <p class="hint" id="webgpuStatus">Checking WebGPU…</p>
+      <h3>Remote API</h3>
+      <label for="apiBase">API base</label>
+      <input id="apiBase" type="url" placeholder="https://api.groq.com/openai/v1" />
+      <label for="apiKey">API key</label>
+      <input id="apiKey" type="password" />
+      <label for="apiModel">Model id</label>
+      <input id="apiModel" type="text" placeholder="llama-3.3-70b-versatile" />
+      <label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:12px">
+        <input type="checkbox" id="streamToggle" checked style="width:auto" /> Stream tokens
+      </label>
+      <div class="row">
+        <button type="button" class="primary" id="saveSettings">Save</button>
+        <button type="button" id="closeSettings">Close</button>
+      </div>
+    </div>
+  </div>
+  <script type="module">
+    const CFG_KEY = "empire-chat-cfg-v3";
+    const HISTORY_KEY = "empire-chat-history-v1";
+    const SYSTEM = "You are Empire Chat, a helpful on-device assistant. Be concise.";
+    const logEl = document.getElementById("log");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const modePill = document.getElementById("modePill");
+    const settingsEl = document.getElementById("settings");
+    const progressWrap = document.getElementById("progressWrap");
+    const progressText = document.getElementById("progressText");
+    const progressFill = document.getElementById("progressFill");
+    const webgpuStatus = document.getElementById("webgpuStatus");
+    let engine = null, engineModel = null, webllmMod = null, loadingEngine = false;
+
+    function loadCfg() {
+      try {
+        return Object.assign({ mode:"webllm", webllmModel:"Llama-3.2-1B-Instruct-q4f16_1-MLC", apiBase:"", apiKey:"", apiModel:"gpt-4o-mini", stream:true },
+          JSON.parse(localStorage.getItem(CFG_KEY) || "{}"));
+      } catch {
+        return { mode:"webllm", webllmModel:"Llama-3.2-1B-Instruct-q4f16_1-MLC", apiBase:"", apiKey:"", apiModel:"gpt-4o-mini", stream:true };
+      }
+    }
+    function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+    let cfg = loadCfg();
+    const memory = (() => { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; } })();
+    function saveHistory() { localStorage.setItem(HISTORY_KEY, JSON.stringify(memory.slice(-40))); }
+
+    function updateModePill() {
+      modePill.classList.remove("webllm", "live");
+      if (cfg.mode === "webllm") { modePill.textContent = engine ? "WebLLM ready" : "WebLLM"; modePill.classList.add("webllm"); }
+      else if (cfg.mode === "api" && cfg.apiBase) { modePill.textContent = "live API"; modePill.classList.add("live"); }
+      else modePill.textContent = "rules";
+    }
+
+    function addBubble(role, text) {
+      const div = document.createElement("div");
+      div.className = "bubble " + role;
+      div.textContent = text;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+      return div;
+    }
+    function pushMsg(role, content) {
+      memory.push({ role, content, t: Date.now() });
+      saveHistory();
+      return addBubble(role === "user" ? "user" : role === "system" ? "sys" : "bot", content);
+    }
+
+    if (memory.length) memory.forEach(m => addBubble(m.role === "user" ? "user" : m.role === "system" ? "sys" : "bot", m.content));
+    else pushMsg("assistant", "Empire Chat + WebLLM.\n\n1. Settings → WebLLM\n2. Llama 3.2 1B\n3. Load model\n4. Chat\n\nNeeds WebGPU (Chrome).");
+    updateModePill();
+
+    (async () => {
+      if (!navigator.gpu) { webgpuStatus.textContent = "WebGPU not available — use API mode or desktop Chrome."; return; }
+      try {
+        const a = await navigator.gpu.requestAdapter();
+        webgpuStatus.textContent = a ? "WebGPU available." : "No WebGPU adapter.";
+      } catch { webgpuStatus.textContent = "WebGPU check failed."; }
+    })();
+
+    async function ensureWebllm() {
+      if (webllmMod) return webllmMod;
+      progressWrap.classList.add("show");
+      progressText.textContent = "Importing WebLLM…";
+      progressFill.style.width = "5%";
+      webllmMod = await import("https://esm.run/@mlc-ai/web-llm");
+      return webllmMod;
+    }
+
+    async function loadWebllmEngine(modelId) {
+      if (loadingEngine) return;
+      loadingEngine = true;
+      sendBtn.disabled = true;
+      progressWrap.classList.add("show");
+      try {
+        const webllm = await ensureWebllm();
+        progressText.textContent = "Loading " + modelId + "…";
+        engine = await webllm.CreateMLCEngine(modelId, {
+          initProgressCallback: (p) => {
+            const pct = typeof p.progress === "number" ? Math.round(p.progress * 100) : 0;
+            progressFill.style.width = Math.max(5, pct) + "%";
+            progressText.textContent = p.text || ("Loading " + pct + "%");
+          },
+        });
+        engineModel = modelId;
+        progressFill.style.width = "100%";
+        progressText.textContent = "Ready: " + modelId;
+        updateModePill();
+        addBubble("sys", "WebLLM loaded: " + modelId);
+        setTimeout(() => progressWrap.classList.remove("show"), 1000);
+      } catch (err) {
+        progressWrap.classList.remove("show");
+        addBubble("sys", "Load failed: " + (err.message || err));
+        engine = null;
+      } finally {
+        loadingEngine = false;
+        sendBtn.disabled = false;
+        updateModePill();
+      }
+    }
+
+    function buildMessages(userText) {
+      const messages = [{ role: "system", content: SYSTEM }];
+      const turns = memory.filter(m => m.role === "user" || m.role === "assistant").slice(-8);
+      for (const m of turns) messages.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content.slice(0, 3000) });
+      const last = turns[turns.length - 1];
+      if (!last || last.role !== "user" || last.content !== userText) messages.push({ role: "user", content: userText.slice(0, 3000) });
+      return messages;
+    }
+
+    async function replyWebllm(userText, bubble) {
+      if (!engine || engineModel !== cfg.webllmModel) await loadWebllmEngine(cfg.webllmModel);
+      if (!engine) throw new Error("Engine not loaded");
+      const t0 = performance.now();
+      let first = null, full = "";
+      bubble.textContent = "";
+      if (cfg.stream !== false) {
+        const chunks = await engine.chat.completions.create({ messages: buildMessages(userText), stream: true, temperature: 0.7 });
+        for await (const chunk of chunks) {
+          const delta = chunk.choices?.[0]?.delta?.content || "";
+          if (delta) {
+            if (first == null) first = performance.now();
+            full += delta;
+            bubble.textContent = full;
+            logEl.scrollTop = logEl.scrollHeight;
+          }
+        }
+      } else {
+        const reply = await engine.chat.completions.create({ messages: buildMessages(userText), stream: false, temperature: 0.7 });
+        full = reply.choices?.[0]?.message?.content || "";
+        bubble.textContent = full;
+        first = performance.now();
+      }
+      const meta = document.createElement("div");
+      meta.className = "latency";
+      meta.textContent = "WebLLM · " + Math.round(performance.now() - t0) + " ms";
+      bubble.appendChild(meta);
+      return full.trim() || "(empty)";
+    }
+
+    async function replyApi(userText, bubble) {
+      const t0 = performance.now();
+      const res = await fetch(cfg.apiBase.replace(/\/$/, "") + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(cfg.apiKey ? { Authorization: "Bearer " + cfg.apiKey } : {}) },
+        body: JSON.stringify({ model: cfg.apiModel, messages: buildMessages(userText), temperature: 0.7 }),
+      });
+      if (!res.ok) throw new Error("API " + res.status);
+      const data = await res.json();
+      const full = data.choices?.[0]?.message?.content || "";
+      bubble.textContent = full;
+      const meta = document.createElement("div");
+      meta.className = "latency";
+      meta.textContent = "API · " + Math.round(performance.now() - t0) + " ms";
+      bubble.appendChild(meta);
+      return full.trim();
+    }
+
+    function replyRules(userText) {
+      const t = userText.toLowerCase();
+      if (/webllm|webgpu/.test(t)) return "WebLLM runs models in the browser with WebGPU. Prefer 1B models on a tablet.";
+      if (/clear/.test(t)) { localStorage.removeItem(HISTORY_KEY); memory.length = 0; logEl.innerHTML = ""; return "History cleared."; }
+      if (/help/.test(t)) return "Settings → WebLLM → Load model. First run downloads weights.";
+      return "Rules mode. Switch to WebLLM in Settings for on-device AI.";
+    }
+
+    async function handleSend() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      sendBtn.disabled = true;
+      pushMsg("user", text);
+      const bubble = addBubble("bot", "…");
+      try {
+        let reply;
+        if (cfg.mode === "webllm") reply = await replyWebllm(text, bubble);
+        else if (cfg.mode === "api" && cfg.apiBase) reply = await replyApi(text, bubble);
+        else { reply = replyRules(text); bubble.textContent = reply; }
+        memory.push({ role: "assistant", content: reply, t: Date.now() });
+        saveHistory();
+      } catch (err) {
+        bubble.textContent = "Error: " + (err.message || err);
+      }
+      sendBtn.disabled = false;
+      input.focus();
+    }
+
+    sendBtn.onclick = handleSend;
+    input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } });
+
+    function fillForm() {
+      document.getElementById("engineMode").value = cfg.mode || "webllm";
+      document.getElementById("webllmModel").value = cfg.webllmModel;
+      document.getElementById("apiBase").value = cfg.apiBase || "";
+      document.getElementById("apiKey").value = cfg.apiKey || "";
+      document.getElementById("apiModel").value = cfg.apiModel || "";
+      document.getElementById("streamToggle").checked = cfg.stream !== false;
+    }
+    document.getElementById("settingsBtn").onclick = () => { fillForm(); settingsEl.classList.add("open"); };
+    document.getElementById("closeSettings").onclick = () => settingsEl.classList.remove("open");
+    settingsEl.addEventListener("click", e => { if (e.target === settingsEl) settingsEl.classList.remove("open"); });
+    document.getElementById("saveSettings").onclick = () => {
+      cfg = {
+        mode: document.getElementById("engineMode").value,
+        webllmModel: document.getElementById("webllmModel").value,
+        apiBase: document.getElementById("apiBase").value.trim(),
+        apiKey: document.getElementById("apiKey").value.trim(),
+        apiModel: document.getElementById("apiModel").value.trim(),
+        stream: document.getElementById("streamToggle").checked,
+      };
+      saveCfg(cfg);
+      updateModePill();
+      settingsEl.classList.remove("open");
+      addBubble("sys", "Saved · mode=" + cfg.mode);
+    };
+    document.getElementById("loadWebllmBtn").onclick = async () => {
+      cfg.mode = "webllm";
+      cfg.webllmModel = document.getElementById("webllmModel").value;
+      document.getElementById("engineMode").value = "webllm";
+      saveCfg(cfg);
+      settingsEl.classList.remove("open");
+      await loadWebllmEngine(cfg.webllmModel);
+    };
+
+    if (cfg.mode === "webllm" && navigator.gpu) addBubble("sys", "WebLLM mode. Settings → Load model when ready.");
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
+  </script>
+</body>
+</html>
