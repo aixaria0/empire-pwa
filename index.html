@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="description" content="Empire PWA — Push subscription management" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <title>Empire PWA — Push Manager</title>
+  <style>
+    :root {
+      --bg: #0a0a0a; --panel: #141414; --border: #2a2a2a;
+      --fg: #e8e8e8; --muted: #9a9a9a; --accent: #3b82f6; --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg); color: var(--fg); padding: 16px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 4px; }
+    h2 { font-size: 1.05rem; margin: 0 0 10px; }
+    p { margin: 0 0 12px; color: var(--muted); line-height: 1.45; }
+    code { font-size: 0.85em; background: #1c1c1c; padding: 2px 6px; border-radius: 6px; }
+    .app { display: grid; gap: 16px; max-width: 720px; margin: 0 auto; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px;
+    }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    button {
+      font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid #333;
+      background: #111; color: #fff; padding: 10px 14px;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); }
+    button.danger { background: #7f1d1d; border-color: #991b1b; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    input[type="text"] {
+      width: 100%; padding: 10px 12px; border-radius: 8px; margin-bottom: 10px;
+      border: 1px solid #333; background: #0a0a0a; color: #fff; font: inherit;
+    }
+    .pill {
+      display: inline-block; padding: 4px 10px; border-radius: 999px;
+      font-size: 0.75rem; font-weight: 600; background: #1c1c1c;
+      border: 1px solid #333; margin: 0 6px 6px 0;
+    }
+    .pill.on { background: #14532d; border-color: #166534; }
+    .pill.off { background: #450a0a; border-color: #7f1d1d; }
+    .pill.warn { background: #713f12; border-color: #a16207; }
+    pre {
+      background: #0a0a0a; border: 1px solid #333; border-radius: 8px;
+      padding: 10px; overflow: auto; font-size: 0.75rem; max-height: 180px;
+      white-space: pre-wrap; word-break: break-all; color: #c4c4c4;
+    }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Push subscription management</h1>
+      <p>Subscribe, inspect, export, and unsubscribe — Chrome on Android. <a href="./chat.html" style="color:#3b82f6">Open Chat</a></p>
+    </header>
+    <section class="card">
+      <h2>Status</h2>
+      <p>
+        <span class="pill" id="swPill">SW: …</span>
+        <span class="pill" id="pushPill">Push: …</span>
+        <span class="pill" id="permPill">Permission: …</span>
+        <span class="pill" id="subPill">Subscription: …</span>
+      </p>
+      <p id="msg" class="muted"></p>
+    </section>
+    <section class="card">
+      <h2>VAPID public key</h2>
+      <label for="vapidInput">Application server key (public)</label>
+      <input type="text" id="vapidInput" placeholder="BNxxxxxxxx…" autocomplete="off" />
+      <div class="controls">
+        <button type="button" id="saveVapidBtn">Save key</button>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Manage subscription</h2>
+      <div class="controls">
+        <button type="button" class="primary" id="subscribeBtn">Subscribe</button>
+        <button type="button" class="danger" id="unsubscribeBtn">Unsubscribe</button>
+        <button type="button" id="refreshBtn">Refresh status</button>
+        <button type="button" id="copyBtn">Copy JSON</button>
+        <button type="button" id="localNotifBtn">Local test notification</button>
+      </div>
+      <p class="muted">Subscription JSON:</p>
+      <pre id="subJson">null</pre>
+    </section>
+  </div>
+  <script src="./push-manager.js"></script>
+  <script>
+    const msg = document.getElementById("msg");
+    const subJson = document.getElementById("subJson");
+    const vapidInput = document.getElementById("vapidInput");
+    const VAPID_LS_KEY = "empire-vapid-public";
+    function setPill(id, text, kind) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = "pill " + (kind || "");
+    }
+    function setMsg(text) { msg.textContent = text || ""; }
+    vapidInput.value = localStorage.getItem(VAPID_LS_KEY) || "";
+    if (vapidInput.value) PushSubscriptionManager.setVapidPublicKey(vapidInput.value);
+    document.getElementById("saveVapidBtn").onclick = () => {
+      const key = vapidInput.value.trim();
+      localStorage.setItem(VAPID_LS_KEY, key);
+      PushSubscriptionManager.setVapidPublicKey(key);
+      setMsg(key ? "VAPID key saved." : "Key cleared.");
+    };
+    async function refreshStatus() {
+      if (!("serviceWorker" in navigator)) setPill("swPill", "SW: unsupported", "off");
+      else {
+        try {
+          const reg = await navigator.serviceWorker.getRegistration();
+          setPill("swPill", reg ? "SW: registered" : "SW: none", reg ? "on" : "warn");
+        } catch { setPill("swPill", "SW: error", "off"); }
+      }
+      if (!PushSubscriptionManager.isSupported()) setPill("pushPill", "Push: unsupported", "off");
+      else setPill("pushPill", "Push: supported", "on");
+      const perm = PushSubscriptionManager.getPermission();
+      setPill("permPill", "Permission: " + perm, perm === "granted" ? "on" : perm === "denied" ? "off" : "warn");
+      let sub = null;
+      try { sub = await PushSubscriptionManager.getSubscription(); } catch (_) {}
+      setPill("subPill", sub ? "Subscription: active" : "Subscription: none", sub ? "on" : "warn");
+      const json = sub ? sub.toJSON() : PushSubscriptionManager.loadLocal();
+      subJson.textContent = json ? JSON.stringify(json, null, 2) : "null";
+    }
+    document.getElementById("subscribeBtn").onclick = async () => {
+      try {
+        PushSubscriptionManager.setVapidPublicKey(vapidInput.value.trim());
+        await PushSubscriptionManager.subscribe({
+          onSubscribe: async (subscription) => console.log("Send to backend:", subscription.toJSON()),
+        });
+        setMsg("Subscribed.");
+        await refreshStatus();
+      } catch (err) {
+        setMsg(String(err.message || err));
+        await refreshStatus();
+      }
+    };
+    document.getElementById("unsubscribeBtn").onclick = async () => {
+      try {
+        const ok = await PushSubscriptionManager.unsubscribe();
+        setMsg(ok ? "Unsubscribed." : "No subscription.");
+        await refreshStatus();
+      } catch (err) { setMsg(String(err.message || err)); }
+    };
+    document.getElementById("refreshBtn").onclick = () => refreshStatus();
+    document.getElementById("copyBtn").onclick = async () => {
+      const json = await PushSubscriptionManager.exportSubscriptionJSON();
+      if (!json) { setMsg("Nothing to copy."); return; }
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(json));
+        setMsg("Copied.");
+      } catch { setMsg("Clipboard blocked."); }
+    };
+    document.getElementById("localNotifBtn").onclick = async () => {
+      if (!("Notification" in window)) return;
+      let perm = Notification.permission;
+      if (perm === "default") perm = await Notification.requestPermission();
+      if (perm === "granted") {
+        new Notification("Empire PWA", { body: "Local test", icon: "./icon.svg" });
+        setMsg("Local notification shown.");
+      } else setMsg("Permission: " + perm);
+    };
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").then(() => refreshStatus()).catch((err) => {
+        setPill("swPill", "SW: failed", "off");
+        setMsg("SW failed: " + err.message);
+      });
+    } else refreshStatus();
+  </script>
+</body>
+</html>
